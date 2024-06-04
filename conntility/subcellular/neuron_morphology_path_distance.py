@@ -140,11 +140,38 @@ class MorphologyPathDistanceCalculator(object):
         offsets[locs[str_section_id].values == 0] = 0.0
         return offsets
     
+    def within_section_offsets_pos(self, locs,
+                               str_section_id="afferent_section_id",
+                               str_section_pos="afferent_section_pos"):
+        """
+        Calculate the offset of points within a section using the section position encoding.
+
+        Args:
+          locs (pandas.DataFrame): dataframe where columns specify the section id, segment id and within-segment offset
+          of points on the neuron morphology. 
+          str_section_id (default="afferent_section_id"): The name of the column holding the section id.
+          str_section_pos (default="afferent_section_pos"): The name of the column holding the within section position (normalized).
+        
+        Note: The default column names are set to what bluepysnap returns when asked for afferent synapses.
+        Also, the section id is expected to be base-1 indexed. That is, index 0 is the soma, index 1 is the first "proper" section.
+        The within section position is not similar to the offset in the sense that it is normalized and should therefore be in the [0.0,1.0] range.
+        As path distance along the soma is a tricky concept, the function will return 0.0 for all entries on the soma!
+
+        Returns:
+          offsets (numpy.array): The within-section offsets in the same order as the input.
+        """
+        lenghts = numpy.array([segment.length for segment in self.m.sections])
+        offsets = numpy.array(locs[str_section_pos].values)*[lenghts[sec_id-1] for sec_id in locs["afferent_section_id"].values]
+        return offsets
+    
     def path_distances(self, locs_from, locs_to=None,
                        str_section_id="afferent_section_id",
                        str_segment_id="afferent_segment_id",
                        str_offset="afferent_segment_offset",
-                       same_section_only=False):
+                       str_section_pos="afferent_section_pos",
+                       same_section_only=False,
+                       from_use_section_pos=False,
+                       to_use_section_pos=False):
         """
         Calculate path distances. Either pairwise, or between two sets of points.
         Args:
@@ -155,7 +182,10 @@ class MorphologyPathDistanceCalculator(object):
           str_section_id (default="afferent_section_id"): The name of the column holding the section id.
           str_segment_id (default="afferent_segment_id"): The name of the column holding the segment id.
           str_offset (defaults="afferent_segment_offset"): The name of the column holding the within-segment offset.
+          str_section_pos (default="afferent_section_pos"): The name of the column holding the section id. Only matters if either `from_use_section_pos` of `to_use_section_pos` are set to `True`.
           same_section_only (bool, default=False): If True, set values for all pairs NOT on the same section to NaN.
+          from_use_section_pos (bool, default=False): If true, will compute the within section offset of the `locs_from` variable using the section position encoding instead of the segment offset encoding.
+          to_use_section_pos (bool, default=False): If true, will compute the within section offset of the `locs_to` variable using the section position encoding instead of the segment offset encoding.
 
           Note: The default column names are set to what bluepysnap returns when asked for afferent synapses.
           Also, the section id is expected to be base-1 indexed. That is, index 0 is the soma, index 1 is the first "proper" section.
@@ -169,10 +199,20 @@ class MorphologyPathDistanceCalculator(object):
         if locs_to is None:
             locs_to = locs_from
         
-        o_from = self.within_section_offsets(locs_from, str_section_id=str_section_id,
-                                             str_segment_id=str_segment_id, str_offset=str_offset)
-        o_to = self.within_section_offsets(locs_to, str_section_id=str_section_id,
-                                           str_segment_id=str_segment_id, str_offset=str_offset)
+        if from_use_section_pos :
+            o_from = self.within_section_offsets_pos(locs_from, str_section_id=str_section_id,
+                                                 str_section_pos=str_section_pos)
+        else:
+            o_from = self.within_section_offsets(locs_from, str_section_id=str_section_id,
+                                                 str_segment_id=str_segment_id, str_offset=str_offset)
+        
+        if to_use_section_pos :
+            o_to = self.within_section_offsets_pos(locs_to, str_section_id=str_section_id,
+                                                 str_section_pos=str_section_pos)
+        else:
+            o_to = self.within_section_offsets(locs_to, str_section_id=str_section_id,
+                                                 str_segment_id=str_segment_id, str_offset=str_offset)
+            
         if same_section_only:
             same_section = numpy.eye(len(self.m.sections) + 1, dtype=bool)
             same_section = same_section[numpy.ix_(locs_from[str_section_id], locs_to[str_section_id])]
