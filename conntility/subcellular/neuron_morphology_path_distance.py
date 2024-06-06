@@ -21,7 +21,7 @@ class MorphologyPathDistanceCalculator(object):
         """
         assert 0 in morphology.connectivity[-1], "This class requires the first section to be connected to the soma!"
         self.m = morphology
-        self.D, self.R, self.O = self.__initialize_tables__()
+        self.D, self.R, self.O, self.L = self.__initialize_tables__()
     
     @staticmethod
     def segment_offset_table(m):
@@ -111,7 +111,7 @@ class MorphologyPathDistanceCalculator(object):
         for child in m.root_sections:
             recursive_fill(child, -1, 0)
         
-        return root_D_tbl, relation_tbl, O
+        return root_D_tbl, relation_tbl, O, L
     
     def within_section_offsets(self, locs,
                                str_section_id="afferent_section_id",
@@ -138,6 +138,9 @@ class MorphologyPathDistanceCalculator(object):
         assert not numpy.any(numpy.isnan(offsets))
         offsets = offsets + locs[str_offset].values
         offsets[locs[str_section_id].values == 0] = 0.0
+        length = numpy.array([self.L[sec_id-1] for sec_id in locs[str_section_id].values])
+        error = offsets > length
+        offsets = offsets - (offsets * error) + (length * error)
         return offsets
     
     def within_section_offsets_pos(self, locs,
@@ -160,9 +163,42 @@ class MorphologyPathDistanceCalculator(object):
         Returns:
           offsets (numpy.array): The within-section offsets in the same order as the input.
         """
-        lenghts = numpy.array([segment.length for segment in self.m.sections])
-        offsets = numpy.array(locs[str_section_pos].values)*[lenghts[sec_id-1] for sec_id in locs["afferent_section_id"].values]
+        length = numpy.array([self.L[sec_id-1] for sec_id in locs[str_section_id].values])
+        offsets = numpy.array(locs[str_section_pos].values)*length
+        offsets[locs[str_section_id].values == 0] = 0.0
+        error = offsets > length
+        offsets = offsets - (offsets * error) + (length * error)
         return offsets
+    
+    def compute_segment_encoding(self, locs,
+                                 str_section_id = "afferent_section_id",
+                                 str_section_offset = "afferent_section_offset"):
+        """
+        Compute and return the segment encoding of points. Uses the section offset encoding to do so (can be computed used within_section_offsets_pos).
+        
+        Args:
+          locs (pandas.DataFrame): dataframe where columns specify the section id, segment id and within-segment offset
+          of points on the neuron morphology. 
+          str_section_id (default="afferent_section_id"): The name of the column holding the section id.
+          str_section_offset (default="afferent_section_offset"): The name of the column holding the within section offset.
+        
+        Note:
+          TO TEST !!!
+        
+        Returns:
+          segment_id (numpy.array): The identifier of the segments in the same order as the input.
+          segment_pos (numpy_array): The relative position of the points on their corresponding segment (normalized) in the same order as the input.
+          segment_offset (numpy_array): The relative offset of the point to the beginning of its corresponding segment. In the same order as the input.
+        """
+        sections = numpy.unique(locs[str_section_id].values)
+        offsets_per_section = [locs[str_section_offset].values * (locs[str_section_id] == i).values for i in sections] #Computing the offset of every point in every section. Allows for fast interpolation.
+        offset_per_segments = numpy.array([numpy.interp(offsets_per_section[i], self.O[sections[i]-1], range(self.O.shape[1])) for i in range(len(sections))]) #Interpolate the offset on the section with the segment encoding (only one non-zero value per column).
+        within_segment_positions = numpy.sum(offset_per_segments, axis=0) #Rebase by the points instead of the sections.
+        segment_id = within_segment_positions.astype(int)
+        segment_pos = within_segment_positions - segment_id
+        segment_offset = locs[str_section_offset].values - numpy.array([self.O[el-1][segment_id[i]] for i, el in enumerate(locs[str_section_id].values)])
+        return segment_id, segment_pos, segment_offset
+                         
     
     def path_distances(self, locs_from, locs_to=None,
                        str_section_id="afferent_section_id",
